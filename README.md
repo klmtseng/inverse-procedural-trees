@@ -226,42 +226,24 @@ inverse-procedural-trees/
 
 The current pipeline is gradient-free by design (DE + CPU). DL
 approaches in the recent literature (Lopez 2023, CropCraft 2024,
-ProcGen3D 2025) produce visibly better fits but need PyTorch + a GPU.
-The natural progression, in increasing order of complexity:
+ProcGen3D 2025) produce visibly better fits but need PyTorch + a
+discrete GPU. The natural progression, in increasing order of
+complexity:
 
-| Direction | What it adds | Hardware needed |
-|---|---|---|
-| **VGG / CLIP perceptual loss** (already wired) | Texture-aware similarity (catches "fluffiness" pixel χ² misses). Currently optional + slow on CPU. | Any modern GPU; GTX 1070 trivially handles VGG16 / CLIP ViT-B/32 inference (~500 MB VRAM each). |
-| **Differentiable rendering** ([nvdiffrast](https://nvlabs.github.io/nvdiffrast/)) | Replace DE's 300 random evaluations with ~30 gradient descent steps. Expected 10–50× speedup per fit. | Any CUDA GPU (Pascal+); GTX 1070 verified compatible. ~2 GB VRAM at 224×224. |
-| **CNN initialiser** | Train a small CNN to predict initial parameters from the photo's CLIP embedding, then refine with DE. Warm-start eliminates most early evals. | GTX 1070 enough for training + inference. Needs a few hundred photo→param pairs (could bootstrap from the existing 13 fits). |
-| **Differentiable procedural model** ([ProcGen3D-style](https://arxiv.org/abs/2503.00045)) | Re-implement SCA / WP as differentiable PyTorch ops. End-to-end gradient. | RTX 3060+ recommended for training; GTX 1070 OK for inference only. |
-| **Neural texture synthesis** | Replace photo-derived sprite library with a per-photo generative model (DCGAN / StyleGAN on cropped leaf patches). | RTX 3060+ for training. |
+| Direction | What it adds |
+|---|---|
+| **VGG / CLIP perceptual loss** (already wired via `--vgg`) | Texture-aware similarity (catches "fluffiness" pixel χ² misses). Currently optional + slow on CPU — moving the forward pass to GPU makes it cheap enough to enable by default. |
+| **Differentiable rendering** ([nvdiffrast](https://nvlabs.github.io/nvdiffrast/)) | Replace DE's 300 random evaluations with ~30 gradient descent steps. Expected 10–50× speedup per fit. |
+| **CNN initialiser** | Train a small CNN to predict initial parameters from the photo's CLIP embedding, then refine with DE. Warm-start eliminates most early evals. |
+| **Differentiable procedural model** ([ProcGen3D-style](https://arxiv.org/abs/2503.00045)) | Re-implement SCA / WP as differentiable PyTorch ops. End-to-end gradient through the procedural generator itself. |
+| **Neural texture synthesis** | Replace photo-derived sprite library with a per-photo generative model (DCGAN / StyleGAN on cropped leaf patches). |
 
-### Will a GTX 1070 work?
-
-**Yes for tiers 1–3.** A 1070 (8 GB VRAM, Pascal, ~6.5 TFLOPS) is a
-real entry point for the DL path:
-
-- ✅ VGG perceptual loss: ~50 ms per eval (vs 5 ms current CPU pixel
-  losses) but adds a *gradient direction* that purely-pixel losses
-  can't give. Already supported in `objective.py` via `--vgg` flag —
-  just install `torch torchvision`.
-- ✅ CLIP semantic loss: same story, currently un-wired but trivial to
-  add. ~600 MB VRAM.
-- ✅ nvdiffrast: works on Pascal cards (verified by NVIDIA's docs).
-  Would let you swap `scipy.optimize.differential_evolution` for
-  `torch.optim.Adam` with autograd through the rasteriser. Expected
-  big-O improvement (10–50× faster fits).
-- ⚠️ Training a fit-from-photo CNN: fine for 1070 if dataset stays
-  modest (a few thousand pairs).
-- ❌ Training large vision transformers from scratch: 1070 is the
-  bottom of the range. Would want 12+ GB.
-
-If you have a 1070 lying around and want to extend this, the highest-
-ROI first step is probably **switching SCA / WP rasterisation to
-nvdiffrast** so the existing objective becomes gradient-based. That
-single change should put per-fit cost in the seconds, opening up
-much-larger sweeps + ensemble fits.
+A discrete CUDA GPU (any modern card, e.g. RTX 3060 or better) is the
+sensible jumping-off point. The single highest-ROI change would be
+**switching SCA / WP rasterisation to nvdiffrast** so the existing
+objective becomes gradient-based — that one swap puts per-fit cost in
+the seconds rather than minutes, opening up much-larger sweeps and
+ensemble fits.
 
 ---
 
@@ -304,27 +286,22 @@ much-larger sweeps + ensemble fits.
 
 詳見上方 Quick Start。
 
-### 下一步：GPU / 深度學習
+### 下一步：搭配獨立顯卡的深度學習擴展
 
-本 repo 刻意是 gradient-free + CPU only，主要是讓沒 GPU 也能跑。
-有 GPU 之後最值得加的方向：
+本 repo 刻意是 gradient-free + CPU only，讓沒 GPU 的機器也能跑。
+要再推進視覺品質，下一步的自然方向是**搭配獨立顯卡**做 DL 擴展：
 
-| 方向 | 加什麼 | 顯卡需求 |
-|---|---|---|
-| **VGG / CLIP perceptual loss** | 真正的紋理相似度（pixel loss 抓不到的「蓬鬆感」）| GTX 1070 (8 GB) 跑 VGG16 / CLIP ViT-B/32 都輕鬆 |
-| **可微分渲染** ([nvdiffrast](https://nvlabs.github.io/nvdiffrast/)) | 取代 DE 的 300 次隨機評估、改用 30 步 gradient descent。預期單張擬合速度 10–50× | 任何 CUDA GPU (Pascal+)；1070 已驗證可跑 |
-| **CNN 初始化器** | 訓小 CNN 從照片 CLIP embedding 預測初始參數、再用 DE 微調。Warm-start 砍掉前半部 eval | GTX 1070 訓+推理都夠 |
-| **可微分程序模型** ([ProcGen3D 風格](https://arxiv.org/abs/2503.00045)) | 把 SCA / WP 重寫成 PyTorch 可微分版、end-to-end gradient | RTX 3060+ 訓練、1070 OK 推理 |
+| 方向 | 加什麼 |
+|---|---|
+| **VGG / CLIP perceptual loss**（已內建 `--vgg`）| 真正的紋理相似度（pixel loss 抓不到的「蓬鬆感」）。GPU 化之後快到可以預設開啟 |
+| **可微分渲染** ([nvdiffrast](https://nvlabs.github.io/nvdiffrast/)) | 取代 DE 的 300 次隨機評估、改用 ~30 步 gradient descent。預期單張擬合速度 10–50× |
+| **CNN 初始化器** | 訓小 CNN 從照片 CLIP embedding 預測初始參數、再用 DE 微調。Warm-start 砍掉前半部 eval |
+| **可微分程序模型** ([ProcGen3D 風格](https://arxiv.org/abs/2503.00045)) | 把 SCA / WP 重寫成 PyTorch 可微分版，end-to-end gradient 一路通到程序生成器本身 |
+| **神經紋理合成** | 用 per-photo 生成模型（DCGAN / StyleGAN on cropped leaves）取代照片切出來的 sprite 庫 |
 
-**GTX 1070 可以嗎？** **可以做到 1–3 級**。8 GB VRAM、Pascal 架構、~6.5 TFLOPS，是 DL 路線的合理入門：
-- ✅ VGG 感知損失：當前 `--vgg` flag 已支援，只需 `pip install torch torchvision`
-- ✅ nvdiffrast 可微分渲染：NVIDIA 文件確認 Pascal 可跑，最大 ROI 的第一步
-- ⚠️ 訓自己的 photo→param CNN：小資料集 OK
-- ❌ 從頭訓大 transformer：1070 是下限，建議 12 GB+
-
-如果你有 1070 想擴展這個專案，最高 CP 值的第一步是**把 SCA / WP 的
-rasterisation 換成 nvdiffrast**——現有的 objective 立刻變成 gradient-based，
-單次擬合從幾分鐘掉到幾秒，可以做更大規模 sweep + ensemble fit。
+整體最高 CP 值的第一步是 **把 SCA / WP rasterisation 換成 nvdiffrast**——
+現有的 objective 立刻變成 gradient-based，單次擬合從幾分鐘掉到幾秒，
+可以做更大規模 sweep + ensemble fit。
 
 ---
 
